@@ -1,0 +1,269 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// ---------------- GAME DATA ----------------
+char board[9];
+int turn = 0; // 0 = O, 1 = X
+
+int winCombos[8][3] = {
+  {0,1,2},{3,4,5},{6,7,8},
+  {0,3,6},{1,4,7},{2,5,8},
+  {0,4,8},{2,4,6}
+};
+
+// ---------------- DISPLAY LAYOUT ----------------
+int cellSize = 20;
+int offsetX = 14;
+int offsetY = 2;
+
+// ---------------- INPUT / OUTPUT ----------------
+const int joyX = A1;
+const int joyY = A2;
+const int btnSelect = 10;
+
+const int ledO = 7;
+const int ledX = 6;
+
+// ---------------- JOYSTICK CONTROL ----------------
+const int deadZone = 200;
+const int moveDelay = 200;
+unsigned long lastMoveTime = 0;
+
+String joyAction = "CENTER";
+
+// ---------------- STATE ----------------
+bool lastSelect = HIGH;
+int pos = 0;
+bool gameOver = false;
+
+// ---------------- DRAWING ----------------
+void drawGrid() {
+  display.clearDisplay();
+  display.drawLine(offsetX + cellSize, offsetY, offsetX + cellSize, offsetY + 3 * cellSize, WHITE);
+  display.drawLine(offsetX + 2 * cellSize, offsetY, offsetX + 2 * cellSize, offsetY + 3 * cellSize, WHITE);
+  display.drawLine(offsetX, offsetY + cellSize, offsetX + 3 * cellSize, offsetY + cellSize, WHITE);
+  display.drawLine(offsetX, offsetY + 2 * cellSize, offsetX + 3 * cellSize, offsetY + 2 * cellSize, WHITE);
+}
+
+void drawX(int cell, int color = WHITE) {
+  int col = cell % 3;
+  int row = cell / 3;
+  int x = offsetX + col * cellSize + 4;
+  int y = offsetY + row * cellSize + 4;
+  display.drawLine(x, y, x + 12, y + 12, color);
+  display.drawLine(x + 12, y, x, y + 12, color);
+}
+
+void drawO(int cell, int color = WHITE) {
+  int col = cell % 3;
+  int row = cell / 3;
+  int x = offsetX + col * cellSize + 10;
+  int y = offsetY + row * cellSize + 10;
+  display.drawCircle(x, y, 6, color);
+}
+
+void drawCursor() {
+  int col = pos % 3;
+  int row = pos / 3;
+  int x = offsetX + col * cellSize;
+  int y = offsetY + row * cellSize;
+  display.fillRect(x, y, cellSize, cellSize, WHITE);
+
+  if (board[pos] == 'X') drawX(pos, BLACK);
+  if (board[pos] == 'O') drawO(pos, BLACK);
+}
+
+void drawBoard() {
+  drawGrid();
+
+  for (int i = 0; i < 9; i++) {
+    if (board[i] == 'X') drawX(i);
+    if (board[i] == 'O') drawO(i);
+  }
+
+  drawCursor();
+
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+
+  // Turn info
+  display.setCursor(80, 5);
+  display.println(turn == 0 ? "O TURN" : "X TURN");
+
+  // Joystick action
+  display.setCursor(80, 20);
+  display.println("JOY:");
+  display.setCursor(80, 30);
+  display.println(joyAction);
+
+  display.display();
+}
+
+// ---------------- GAME LOGIC ----------------
+bool checkWin(char p) {
+  for (int i = 0; i < 8; i++)
+    if (board[winCombos[i][0]] == p &&
+        board[winCombos[i][1]] == p &&
+        board[winCombos[i][2]] == p)
+      return true;
+  return false;
+}
+
+bool boardFull() {
+  for (int i = 0; i < 9; i++)
+    if (board[i] == ' ') return false;
+  return true;
+}
+
+void showMessage(const char* msg) {
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setCursor(15, 25);
+  display.print(msg);
+  display.display();
+}
+
+// ---------------- LED EFFECTS ----------------
+void blinkOWin() {
+ 
+  for (int i = 0; i < 13; i++) {
+    digitalWrite(7, false);
+    delay(100);
+    digitalWrite(7,true );
+    delay(100);
+  }
+  
+}
+
+void blinkXWin() {
+  
+  for (int i = 0; i < 13; i++) {
+    digitalWrite(6, false);
+    delay(100);
+    digitalWrite(6,true );
+    delay(100);
+  }
+  
+}
+
+void blinkTie() {
+  
+  for (int i = 0; i < 13; i++) {
+    digitalWrite(ledX, false);
+    digitalWrite(ledO, false);
+    
+    delay(100);
+    digitalWrite(ledX, true);
+    digitalWrite(ledO, true);
+
+    delay(100);
+  }
+  
+ 
+}
+
+// ---------------- RESET ----------------
+void resetGame() {
+  for (int i = 0; i < 9; i++) board[i] = ' ';
+  turn = 0;
+  pos = 0;
+  gameOver = false;
+  joyAction = "CENTER";
+  digitalWrite(ledO, HIGH);
+  digitalWrite(ledX, HIGH);
+  drawBoard();
+}
+
+// ---------------- SETUP ----------------
+void setup() {
+  pinMode(btnSelect, INPUT_PULLUP);
+  pinMode(ledO, OUTPUT);
+  pinMode(ledX, OUTPUT);
+  pinMode(5, OUTPUT);
+
+  digitalWrite(ledO, HIGH);
+  digitalWrite(ledX, HIGH);
+
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(20, 25);
+  display.println("TIC TAC TOE");
+  display.display();
+  delay(2000);
+
+  resetGame();
+}
+
+// ---------------- LOOP ----------------
+void loop() {
+  digitalWrite(ledO, HIGH);
+  digitalWrite(ledX, HIGH);
+
+  int xVal = analogRead(joyX);
+  int yVal = analogRead(joyY);
+
+  joyAction = "CENTER";
+
+  if (millis() - lastMoveTime > moveDelay) {
+if (xVal > 512 + deadZone && pos % 3 != 0) {
+  pos--;
+  joyAction = "LEFT";
+  lastMoveTime = millis();
+}
+else if (xVal < 512 - deadZone && pos % 3 != 2) {
+  pos++;
+  joyAction = "RIGHT";
+  lastMoveTime = millis();
+}
+
+    else if (yVal < 512 - deadZone && pos > 2) {
+      pos -= 3;
+      joyAction = "UP";
+      lastMoveTime = millis();
+    }
+    else if (yVal > 512 + deadZone && pos < 6) {
+      pos += 3;
+      joyAction = "DOWN";
+      lastMoveTime = millis();
+    }
+  }
+
+  bool bSelect = digitalRead(btnSelect);
+
+  if (!gameOver) {
+    if (lastSelect == LOW && bSelect == HIGH) {
+      if (board[pos] == ' ') {
+        char player = turn == 0 ? 'O' : 'X';
+        board[pos] = player;
+
+        if (checkWin(player)) {
+          showMessage(player == 'O' ? "O WINS" : "X WINS");
+          player == 'O' ? blinkOWin() : blinkXWin();
+          gameOver = true;
+        }
+        else if (boardFull()) {
+          showMessage("TIE");
+          blinkTie();
+          gameOver = true;
+        }
+        else {
+          turn = !turn;
+        }
+      }
+    }
+  } else {
+    if (lastSelect == LOW && bSelect == HIGH) resetGame();
+  }
+
+  lastSelect = bSelect;
+  drawBoard();
+  delay(30);
+}
